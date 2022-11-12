@@ -1,93 +1,116 @@
-use std::sync::Arc;
+use std::{iter::Peekable, str::CharIndices};
 
 fn main() {}
-#[derive(Debug, PartialEq)]
-enum Context {}
-#[derive(Debug, PartialEq)]
-enum Problem {}
 
-#[derive(PartialEq, Debug)]
-enum Expression {
-    Empty,
-}
 #[cfg(test)]
 mod tests {
-
-    use crate::run;
-    use crate::{Context, Expression, Problem, State};
+    use crate::Scannable;
 
     #[test]
     fn it_works() {
-        assert_eq!(
-            Ok((Expression::Empty, State::new("1"))),
-            run::<Context, Problem, Expression>(
-                |state: &State<Context>| {
-                    let s = State::<Context>::new("1");
-                    Ok((Expression::Empty, s))
-                },
-                "1",
-            )
+        let mut code = super::ParserState::new("1234a");
+        let res = super::integer(&mut code);
+        assert!(res.is_ok());
+        assert_eq!("1234", res.unwrap());
+        assert_eq!(Some('a'), code.peek());
+        assert_eq!(Some('a'), code.next());
+        assert_eq!(None, code.peek());
+        assert_eq!(None, code.next());
+        code.reset(0);
+        assert_eq!(Some('1'), code.peek());
+    }
+}
+
+trait Parser<'a, Input, Output, Problem>
+where
+    Input: Scannable<'a>,
+{
+    fn parse(&mut self, code: &mut Input) -> Result<Output, Problem>;
+}
+
+impl<'a, Input, Output, Problem, F> Parser<'a, Input, Output, Problem> for F
+where
+    Input: Scannable<'a>,
+    F: FnMut(&mut Input) -> Result<Output, Problem>,
+{
+    fn parse(&mut self, state: &mut Input) -> Result<Output, Problem> {
+        self(state)
+    }
+}
+#[derive(Debug, PartialEq)]
+pub enum ScanningErrors {
+    NotADigit,
+    EOF,
+}
+
+pub trait Scannable<'a> {
+    fn peek(&mut self) -> Option<char>;
+    fn next(&mut self) -> Option<char>;
+    fn slice(&mut self, start: usize) -> &'a str;
+    fn offset(&mut self) -> Option<usize>;
+    fn reset(&mut self, offset: usize);
+}
+
+struct ParserState<'a> {
+    code: &'a str,
+    char_indices: Peekable<CharIndices<'a>>,
+}
+
+impl<'a> Scannable<'a> for ParserState<'a> {
+    fn peek(&mut self) -> Option<char> {
+        self.char_indices.peek().map(|(_, c)| *c)
+    }
+
+    fn next(&mut self) -> Option<char> {
+        self.char_indices.next().map(|(_, c)| c)
+    }
+
+    fn slice(&mut self, start: usize) -> &'a str {
+        if let Some((offset, _)) = self.char_indices.peek() {
+            return &self.code[start..*offset];
+        }
+        &self.code[start..]
+    }
+
+    fn offset(&mut self) -> Option<usize> {
+        self.char_indices.peek().map(|(o, _)| *o)
+    }
+
+    #[allow(unused_must_use)]
+    fn reset(&mut self, offset: usize) {
+        std::mem::replace(
+            &mut self.char_indices,
+            self.code[offset..].char_indices().peekable(),
         );
     }
 }
 
-impl<'a, 'b, F, Context, C2: 'b, Problem, Value> Parser<'a, 'b, Context, Problem, Value> for F
-where
-    F: Fn(&'a State<'a, Context>) -> PStep<'b, C2, Problem, Value>,
-{
-    fn parse(&self, state: &'a State<'a, Context>) -> PStep<'b, Context, Problem, Value> {
-        self(&state)
-    }
-}
-
-#[derive(Debug, PartialEq)]
-struct Located<Context> {
-    row: i64,
-    col: i64,
-    context: Context,
-}
-
-#[derive(Debug, PartialEq)]
-struct State<'a, Context: 'a> {
-    src: &'a str,
-    offset: i64,
-    indent: i64,
-    context: Vec<Located<Context>>,
-    row: i64,
-    col: i64,
-}
-#[derive(Debug, PartialEq)]
-struct DeadEnd<Context, Problem> {
-    row: i64,
-    col: i64,
-    problem: Problem,
-    context_stack: Vec<Located<Context>>,
-}
-
-type PStep<'a, Context, Problem, Value> =
-    Result<(Value, State<'a, Context>), Vec<DeadEnd<Context, Problem>>>;
-
-trait Parser<'a, 'b, Context, Problem, Value> {
-    fn parse(&self, state: &'a State<'a, Context>) -> PStep<'b, Context, Problem, Value>;
-}
-
-impl<'a, Context> State<'a, Context> {
-    fn new(src: &'a str) -> Self {
+impl<'a> ParserState<'a> {
+    fn new(code: &'a str) -> Self {
         Self {
-            src,
-            offset: 0,
-            indent: 1,
-            row: 1,
-            col: 1,
-            context: Vec::new(),
+            code,
+            char_indices: code.char_indices().peekable(),
         }
     }
 }
 
-fn run<'a, 'b, Context, Problem, Value>(
-    parser: impl Parser<'a, 'b, Context, Problem, Value>,
-    src: &'a str,
-) -> PStep<'b, Context, Problem, Value> {
-    let s = State::new(src);
-    parser.parse(&s)
+pub fn digit<'a>(code: &mut impl Scannable<'a>) -> Result<char, ScanningErrors> {
+    if let Some(c) = code.peek() {
+        if c.is_digit(10) {
+            code.next();
+            return Ok(c);
+        }
+        return Err(ScanningErrors::NotADigit);
+    }
+
+    Err(ScanningErrors::EOF)
+}
+
+pub fn integer<'a>(code: &mut impl Scannable<'a>) -> Result<&'a str, ScanningErrors> {
+    if let Some(start) = code.offset() {
+        while let Ok(_) = digit(code) {}
+        return Ok(code.slice(start));
+    }
+
+    Err(ScanningErrors::NotADigit)
 }
