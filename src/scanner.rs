@@ -5,7 +5,7 @@ pub enum ScanningErrors {
     EOF,
 }
 
-pub trait Scannable<'a, Mark, Error> {
+pub trait Scannable<'a, Mark> {
     fn peek(&mut self) -> Option<char>;
     fn next(&mut self) -> Option<char>;
 
@@ -13,8 +13,6 @@ pub trait Scannable<'a, Mark, Error> {
 
     fn mark(&mut self) -> Option<Mark>;
     fn restore(&mut self, mark: &Mark);
-
-    fn error(err: Error) -> Result;
 }
 
 pub fn digit<'a, T>(code: &mut impl Scannable<'a, T>) -> Result<char, ScanningErrors> {
