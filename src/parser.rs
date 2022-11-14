@@ -1,14 +1,19 @@
-use std::{iter::Peekable, ops::Range, str::CharIndices};
+use std::{iter::Peekable, str::CharIndices};
 
-use crate::scanner::{integer, skip_ws, Scannable, ScanningErrors};
+use crate::scanner::{digits, skip_ws, Scannable};
 
 pub struct ParserState<'a> {
     code: &'a str,
     char_indices: Peekable<CharIndices<'a>>,
+    offset: usize,
+    row: u16,
+    col: u16,
 }
 
 pub struct Mark {
-    offset: Option<usize>,
+    offset: usize,
+    row: u16,
+    col: u16,
 }
 
 impl<'a> Scannable<'a, Mark> for ParserState<'a> {
@@ -17,33 +22,39 @@ impl<'a> Scannable<'a, Mark> for ParserState<'a> {
     }
 
     fn next(&mut self) -> Option<char> {
-        self.char_indices.next().map(|(_, c)| c)
-    }
+        let c = self.char_indices.next().map(|(_, c)| c);
 
-    fn offset(&mut self) -> Option<usize> {
-        self.char_indices.peek().map(|(o, _)| *o)
-    }
-
-    fn slice(&mut self, range: Range<usize>) -> Result<&'a str, ScanningErrors> {
-        if range.end > self.code.len() - 1 {
-            return Err(ScanningErrors::EOF);
+        if let Some(c) = c {
+            self.offset += c.len_utf8();
+            if c == '\n' {
+                self.col = 1;
+                self.row += 1;
+            }
         }
-        return Ok(&self.code[range]);
+
+        c
     }
 
-    fn mark(&mut self) -> Mark {
-        Mark {
-            offset: self.offset(),
+    fn substr(&mut self, mark: &Mark) -> &'a str {
+        if let Some((cur, _)) = self.char_indices.peek() {
+            &self.code[mark.offset..*cur]
+        } else {
+            &self.code[mark.offset..]
         }
     }
 
-    fn restore(&mut self, mark: Mark) {
-        std::mem::replace(
-            &mut self.char_indices,
-            self.code[mark.offset.unwrap_or(0)..]
-                .char_indices()
-                .peekable(),
-        );
+    fn mark(&mut self) -> Option<Mark> {
+        self.char_indices.peek().map(|(_, _)| Mark {
+            offset: self.offset,
+            row: self.row,
+            col: self.col,
+        })
+    }
+
+    fn restore(&mut self, mark: &Mark) {
+        self.char_indices = self.code[mark.offset..].char_indices().peekable();
+        self.col = mark.col;
+        self.row = mark.row;
     }
 }
 
@@ -52,6 +63,9 @@ impl<'a> ParserState<'a> {
         Self {
             code,
             char_indices: code.char_indices().peekable(),
+            row: 1,
+            col: 1,
+            offset: 0,
         }
     }
 }
@@ -86,7 +100,7 @@ fn operator<'a, T>(code: &mut impl Scannable<'a, T>) -> Result<Operator, Parsing
 pub fn expression<'a, T>(code: &mut impl Scannable<'a, T>) -> Result<Expression, ParsingError> {
     skip_ws(code);
 
-    let i = match integer(code) {
+    let i = match digits(code) {
         Ok(i) => i
             .parse::<i64>()
             .map(|i| Expression::Integer(i))
@@ -102,12 +116,12 @@ pub fn expression<'a, T>(code: &mut impl Scannable<'a, T>) -> Result<Expression,
 #[test]
 fn it_works() {
     let mut code = ParserState::new(" 1 + 2 ");
-    let mark = code.mark();
+    let mark = code.mark().unwrap();
     let res = expression(&mut code);
     assert!(res.is_ok());
     assert_eq!(Expression::Integer(1), res.unwrap());
 
-    code.restore(mark);
+    assert_eq!(" 1 ", code.substr(&mark));
 
-    assert_eq!(Ok(" 1 + 2 "), code.slice(0usize..));
+    code.restore(&mark);
 }

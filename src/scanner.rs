@@ -1,5 +1,3 @@
-use std::ops::Range;
-
 #[derive(Debug, PartialEq)]
 pub enum ScanningErrors {
     TokenNotFound,
@@ -7,15 +5,16 @@ pub enum ScanningErrors {
     EOF,
 }
 
-pub trait Scannable<'a, T> {
+pub trait Scannable<'a, Mark, Error> {
     fn peek(&mut self) -> Option<char>;
     fn next(&mut self) -> Option<char>;
-    fn offset(&mut self) -> Option<usize>;
 
-    fn substr(&mut self, len: usize) -> Result<&'a str, ScanningErrors>;
+    fn substr(&mut self, start: &Mark) -> &'a str;
 
-    fn mark(&mut self) -> T;
-    fn restore(&mut self, mark: T);
+    fn mark(&mut self) -> Option<Mark>;
+    fn restore(&mut self, mark: &Mark);
+
+    fn error(err: Error) -> Result;
 }
 
 pub fn digit<'a, T>(code: &mut impl Scannable<'a, T>) -> Result<char, ScanningErrors> {
@@ -30,30 +29,45 @@ pub fn digit<'a, T>(code: &mut impl Scannable<'a, T>) -> Result<char, ScanningEr
     Err(ScanningErrors::EOF)
 }
 
-pub fn integer<'a, T>(code: &mut impl Scannable<'a, T>) -> Result<&'a str, ScanningErrors> {
-    if let Some(start) = code.offset() {
-        while let Ok(_) = digit(code) {}
-        return Ok(code.rest(start));
-    }
+pub fn digits<'a, T>(code: &mut impl Scannable<'a, T>) -> Result<&'a str, ScanningErrors> {
+    if let Some(mark) = code.mark() {
+        let mut found = false;
+        while let Ok(_) = digit(code) {
+            found = true
+        }
 
-    Err(ScanningErrors::NotADigit)
+        if found {
+            Ok(code.substr(&mark))
+        } else {
+            Err(ScanningErrors::NotADigit)
+        }
+    } else {
+        Err(ScanningErrors::NotADigit)
+    }
 }
 
 pub fn token<'a, T>(
     code: &mut impl Scannable<'a, T>,
     token: &str,
 ) -> Result<&'a str, ScanningErrors> {
-    if let Some(offset) = code.offset() {
-        let end = offset + token.len();
-        if let Ok(s) = code.slice(offset..end) {
-            if s == token {
-                code.reset(end);
-                return Ok(s);
+    if let Some(mark) = code.mark() {
+        let mut ti = token.chars();
+
+        while let (Some(c1), Some(c2)) = (ti.next(), code.next()) {
+            if c1 != c2 {
+                break;
             }
         }
-    }
 
-    Err(ScanningErrors::TokenNotFound)
+        if ti.next() == None {
+            Ok(code.substr(&mark))
+        } else {
+            code.restore(&mark);
+            Err(ScanningErrors::TokenNotFound)
+        }
+    } else {
+        Err(ScanningErrors::EOF)
+    }
 }
 
 pub fn skip_ws<'a, T>(code: &mut impl Scannable<'a, T>) {
