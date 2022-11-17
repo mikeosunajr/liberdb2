@@ -15,5 +15,6 @@ mod tests {
         assert_eq!("let", res.unwrap());
         assert_eq!(Some(' '), code.peek());
         assert_eq!(Some(' '), code.next());
+        assert_eq!(Some('a'), code.next());
     }
 }

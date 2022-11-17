@@ -10,6 +10,7 @@ pub struct ParserState<'a> {
     col: u16,
 }
 
+#[derive(Debug, PartialEq)]
 pub struct Mark {
     offset: usize,
     row: u16,
@@ -43,12 +44,12 @@ impl<'a> Scannable<'a, Mark> for ParserState<'a> {
         }
     }
 
-    fn mark(&mut self) -> Option<Mark> {
-        self.char_indices.peek().map(|(_, _)| Mark {
+    fn mark(&mut self) -> Mark {
+        return Mark {
             offset: self.offset,
             row: self.row,
             col: self.col,
-        })
+        };
     }
 
     fn restore(&mut self, mark: &Mark) {
@@ -73,6 +74,16 @@ impl<'a> ParserState<'a> {
 #[derive(Debug, PartialEq)]
 pub enum Operator {
     Plus,
+    Multiply,
+}
+
+impl Operator {
+    pub fn infix_binding_power(&self) -> Result<u64, ParsingError> {
+        match self {
+            Self::Plus => Ok(5),
+            Self::Multiply => Ok(6),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -86,42 +97,73 @@ pub enum ParsingError {
     Invalid,
 }
 
-fn operator<'a, T>(code: &mut impl Scannable<'a, T>) -> Result<Operator, ParsingError> {
-    if let Some(op) = code.peek() {
-        if op == '+' {
-            code.next();
-            return Ok(Operator::Plus);
-        }
-    }
+fn infix(code: &mut ParserState) -> Result<Operator, ParsingError> {
+    let res = match code.peek() {
+        Some('+') => Ok(Operator::Plus),
+        Some('*') => Ok(Operator::Multiply),
+        _ => Err(ParsingError::Invalid),
+    };
 
-    Err(ParsingError::Invalid)
+    code.next();
+
+    res
 }
 
-pub fn expression<'a, T>(code: &mut impl Scannable<'a, T>) -> Result<Expression, ParsingError> {
-    skip_ws(code);
-
-    let i = match digits(code) {
+fn integer(code: &mut ParserState) -> Result<Expression, ParsingError> {
+    match digits(code) {
         Ok(i) => i
             .parse::<i64>()
             .map(|i| Expression::Integer(i))
             .map_err(|_| ParsingError::Invalid),
         Err(_) => Err(ParsingError::Invalid),
-    };
+    }
+}
+
+pub fn expression_bp(code: &mut ParserState, min_bp: u64) -> Result<Expression, ParsingError> {
+    skip_ws(code);
+
+    // Get the prefix term
+    let mut lhs = integer(code)?;
+
+    loop {
+        skip_ws(code);
+
+        if let Ok(op) = infix(code) {
+            let bp = op.infix_binding_power()?;
+            if bp < min_bp {
+                break;
+            }
+
+            let rhs = expression_bp(code, bp)?;
+
+            lhs = Expression::BinaryOperation(Box::new(lhs), op, Box::new(rhs));
+
+            continue;
+        }
+
+        break;
+    }
 
     skip_ws(code);
 
-    i
+    Ok(lhs)
 }
 
 #[test]
 fn it_works() {
-    let mut code = ParserState::new(" 1 + 2 ");
-    let mark = code.mark().unwrap();
-    let res = expression(&mut code);
+    let mut code = ParserState::new(" 1 + 2 * 3     ");
+    let res = expression_bp(&mut code, 0);
     assert!(res.is_ok());
-    assert_eq!(Expression::Integer(1), res.unwrap());
-
-    assert_eq!(" 1 ", code.substr(&mark));
-
-    code.restore(&mark);
+    assert_eq!(
+        Expression::BinaryOperation(
+            Box::new(Expression::Integer(1)),
+            Operator::Plus,
+            Box::new(Expression::BinaryOperation(
+                Box::new(Expression::Integer(2)),
+                Operator::Multiply,
+                Box::new(Expression::Integer(3))
+            ))
+        ),
+        res.unwrap()
+    );
 }
