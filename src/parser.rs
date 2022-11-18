@@ -1,6 +1,12 @@
-use std::{iter::Peekable, str::CharIndices};
+use std::{collections::HashMap, iter::Peekable, str::CharIndices};
 
 use crate::scanner::{digits, skip_ws, ErrorWithMark, Scannable};
+
+struct Precedence {
+    operator: Operator,
+    lpb: u8,
+    rpb: u8,
+}
 
 pub struct ParserState<'a> {
     code: &'a str,
@@ -8,6 +14,7 @@ pub struct ParserState<'a> {
     offset: usize,
     row: u16,
     col: u16,
+    operations: HashMap<&'a str, Precedence>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -60,14 +67,31 @@ impl<'a> Scannable<'a, Mark> for ParserState<'a> {
 }
 
 impl<'a> ParserState<'a> {
+    pub fn infixl(&mut self, token: &'a str, operator: Operator, bp: u8) {
+        self.operations.insert(
+            token,
+            Precedence {
+                operator,
+                lpb: bp,
+                rpb: bp + 1,
+            },
+        );
+    }
+
     pub fn new(code: &'a str) -> Self {
-        Self {
+        let mut a = Self {
             code,
             char_indices: code.char_indices().peekable(),
             row: 1,
             col: 1,
             offset: 0,
-        }
+            operations: HashMap::new(),
+        };
+
+        a.infixl("+", Operator::Plus, 1);
+        a.infixl("*", Operator::Multiply, 3);
+
+        a
     }
 }
 
@@ -75,15 +99,6 @@ impl<'a> ParserState<'a> {
 pub enum Operator {
     Plus,
     Multiply,
-}
-
-impl Operator {
-    pub fn infix_binding_power(&self) -> Result<u64, ParsingError> {
-        match self {
-            Self::Plus => Ok(5),
-            Self::Multiply => Ok(6),
-        }
-    }
 }
 
 #[derive(Debug, PartialEq)]
