@@ -1,6 +1,6 @@
 use std::{iter::Peekable, str::CharIndices};
 
-use crate::scanner::{digits, skip_ws, Scannable};
+use crate::scanner::{digits, skip_ws, ErrorWithMark, Scannable};
 
 pub struct ParserState<'a> {
     code: &'a str,
@@ -94,14 +94,14 @@ pub enum Expression {
 
 #[derive(Debug, PartialEq)]
 pub enum ParsingError {
-    Invalid,
+    Invalid(Mark),
 }
 
-fn infix(code: &mut ParserState) -> Result<Operator, ParsingError> {
+fn infix<'a>(code: &mut ParserState) -> Result<Operator, ParsingError> {
     let res = match code.peek() {
         Some('+') => Ok(Operator::Plus),
         Some('*') => Ok(Operator::Multiply),
-        _ => Err(ParsingError::Invalid),
+        _ => Err(ParsingError::Invalid(code.mark())),
     };
 
     code.next();
@@ -114,8 +114,8 @@ fn integer(code: &mut ParserState) -> Result<Expression, ParsingError> {
         Ok(i) => i
             .parse::<i64>()
             .map(|i| Expression::Integer(i))
-            .map_err(|_| ParsingError::Invalid),
-        Err(_) => Err(ParsingError::Invalid),
+            .map_err(|_| ParsingError::Invalid(code.mark())),
+        Err(e) => Err(ParsingError::Invalid(e.mark())),
     }
 }
 

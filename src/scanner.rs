@@ -1,31 +1,52 @@
 use std::fmt::Debug;
 
-#[derive(Debug, PartialEq)]
-pub enum ScanningErrors<M>
-where
-    M: Debug,
-{
-    TokenNotFound(M),
-    NotADigit(M),
-    EOF(M),
+pub trait ErrorWithMark<Mark> {
+    fn mark(self) -> Mark;
 }
 
-pub trait Scannable<'a, M>
+#[derive(Debug, PartialEq)]
+pub enum ScanningErrors<Mark>
 where
-    M: Debug,
+    Mark: Debug,
+{
+    TokenNotFound(Mark),
+    NotADigit(Mark),
+    EOF(Mark),
+}
+
+impl<Mark> ErrorWithMark<Mark> for ScanningErrors<Mark>
+where
+    Mark: Debug,
+{
+    fn mark(self) -> Mark {
+        match self {
+            ScanningErrors::EOF(m) => m,
+            ScanningErrors::NotADigit(m) => m,
+            ScanningErrors::TokenNotFound(m) => m,
+        }
+    }
+}
+
+pub trait Scannable<'a, Mark>
+where
+    Mark: Debug,
 {
     fn peek(&mut self) -> Option<char>;
     fn next(&mut self) -> Option<char>;
 
-    fn substr(&mut self, start: &M) -> &'a str;
+    fn substr(&mut self, start: &Mark) -> &'a str;
 
-    fn mark(&mut self) -> M;
-    fn restore(&mut self, mark: &M);
+    fn mark(&mut self) -> Mark;
+    fn restore(&mut self, mark: &Mark);
 }
 
-pub fn one_of<I, O, E, F>(input: &I, parsers: &[F]) -> Result<O, E>
+pub fn one_of<Input, Output, Error, Parser, Mark>(
+    input: &Input,
+    parsers: &[Parser],
+) -> Result<Output, Error>
 where
-    F: Fn(&I) -> Result<O, E>,
+    Parser: Fn(&Input) -> Result<Output, Error>,
+    Error: ErrorWithMark<Mark>,
 {
     for i in 0..parsers.len() {
         match parsers[i](input) {
@@ -41,11 +62,15 @@ where
     core::panic!()
 }
 
-pub fn some<'a, I, F, O, M, E>(input: &mut I, parser: &F) -> Result<Vec<O>, E>
+pub fn some<'a, Input, Parser, Ooutput, Mark, Error>(
+    input: &mut Input,
+    parser: &Parser,
+) -> Result<Vec<Ooutput>, Error>
 where
-    F: Fn(&I) -> Result<O, E>,
+    Parser: Fn(&Input) -> Result<Ooutput, Error>,
+    Error: ErrorWithMark<Mark>,
 {
-    let mut os: Vec<O> = Vec::new();
+    let mut os: Vec<Ooutput> = Vec::new();
 
     loop {
         match parser(input) {
@@ -62,11 +87,15 @@ where
     Ok(os)
 }
 
-pub fn some_str<'a, I, F, M, E, O>(input: &mut I, parser: &mut F) -> Result<&'a str, E>
+pub fn some_str<'a, Input, Parser, Mark, Error, Output>(
+    input: &mut Input,
+    parser: &mut Parser,
+) -> Result<&'a str, Error>
 where
-    F: FnMut(&mut I) -> Result<O, E>,
-    I: Scannable<'a, M>,
-    M: Debug,
+    Parser: FnMut(&mut Input) -> Result<Output, Error>,
+    Input: Scannable<'a, Mark>,
+    Mark: Debug,
+    Error: ErrorWithMark<Mark>,
 {
     let mark = input.mark();
     let mut found = false;
@@ -86,9 +115,9 @@ where
     return Ok(input.substr(&mark));
 }
 
-pub fn digit<'a, Mark, I>(code: &mut I) -> Result<char, ScanningErrors<Mark>>
+pub fn digit<'a, Mark, Input>(code: &mut Input) -> Result<char, ScanningErrors<Mark>>
 where
-    I: Scannable<'a, Mark>,
+    Input: Scannable<'a, Mark>,
     Mark: Debug,
 {
     if let Some(c) = code.peek() {
@@ -96,28 +125,31 @@ where
             code.next();
             return Ok(c);
         }
-        return Err(ScanningErrors::NotADigit((code.mark())));
+        return Err(ScanningErrors::NotADigit(code.mark()));
     }
 
     Err(ScanningErrors::EOF(code.mark()))
 }
 
-pub fn digits<'a, Mark, I>(code: &mut I) -> Result<&'a str, ScanningErrors<Mark>>
+pub fn digits<'a, Mark, Input>(code: &mut Input) -> Result<&'a str, ScanningErrors<Mark>>
 where
-    I: Scannable<'a, Mark>,
+    Input: Scannable<'a, Mark>,
     Mark: Debug,
 {
     some_str(code, &mut |i| digit(i))
 }
 
-pub fn token<'a, Mark, I>(code: &mut I, token: &str) -> Result<&'a str, ScanningErrors<Mark>>
+pub fn token<'a, Mark, Input>(
+    code: &mut Input,
+    token: &str,
+) -> Result<&'a str, ScanningErrors<Mark>>
 where
-    I: Scannable<'a, Mark>,
+    Input: Scannable<'a, Mark>,
     Mark: Debug,
 {
     let mut ti = token.chars().peekable();
 
-    let mut parser = move |i: &mut I| {
+    let mut parser = move |i: &mut Input| {
         if let (Some(c1), Some(c2)) = (ti.next(), i.peek()) {
             if c1 != c2 {
                 return Err(ScanningErrors::TokenNotFound(i.mark()));
@@ -131,10 +163,10 @@ where
     some_str(code, &mut |i| parser(i))
 }
 
-pub fn skip_ws<'a, T, I>(code: &mut I)
+pub fn skip_ws<'a, Mark, Input>(code: &mut Input)
 where
-    I: Scannable<'a, T>,
-    T: Debug,
+    Input: Scannable<'a, Mark>,
+    Mark: Debug,
 {
     while let Some(c) = code.peek() {
         if !c.is_whitespace() {
