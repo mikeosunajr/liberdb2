@@ -78,6 +78,28 @@ impl<'a> ParserState<'a> {
         );
     }
 
+    pub fn infixr(&mut self, token: &'a str, operator: Operator, bp: u8) {
+        self.operations.insert(
+            token,
+            Precedence {
+                operator,
+                lpb: bp,
+                rpb: bp,
+            },
+        );
+    }
+
+    pub fn infix(&mut self, token: &'a str, operator: Operator, bp: u8) {
+        self.operations.insert(
+            token,
+            Precedence {
+                operator,
+                lpb: bp,
+                rpb: bp,
+            },
+        );
+    }
+
     pub fn new(code: &'a str) -> Self {
         let mut a = Self {
             code,
